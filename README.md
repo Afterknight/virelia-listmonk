@@ -45,3 +45,5 @@ listmonk is free and open source software licensed under AGPLv3. If you are inte
 
 ## License
 listmonk is licensed under the AGPL v3 license.
+
+Virelia Listmonk Deployment
