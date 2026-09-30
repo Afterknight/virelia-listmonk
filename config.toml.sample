@@ -22,3 +22,81 @@ max_lifetime = "300s"
 
 # Optional space separated Postgres DSN params. eg: "application_name=listmonk gssencmode=disable"
 params = ""
+
+# ============================================================================
+# Zoho Mail API messenger (optional)
+# ============================================================================
+# Adds a messenger named "zoho" that sends campaign e-mails through the Zoho
+# Mail REST API using OAuth2 refresh tokens, instead of SMTP. It is registered
+# alongside the existing SMTP messenger, which keeps working unchanged; pick
+# "zoho" as a campaign's messenger to route that campaign through it.
+#
+# The messenger is only initialized if this [zoho] block exists. Set
+# enabled = false to turn it off while keeping the config around.
+#
+# Each child table is one Zoho mailbox with its own independent OAuth client.
+# The mailbox is selected automatically from the campaign's "from" address: a
+# campaign sent from contact@vireliastudio.one uses the [zoho.contact] OAuth
+# credentials, one sent from hello@vireliastudio.one uses [zoho.hello]. A from
+# address with no matching mailbox is rejected with an error rather than being
+# sent through an arbitrary account.
+#
+# Required environment variables (preferred -- keeps secrets out of the file):
+#
+#   LISTMONK_ZOHO__CONTACT__CLIENT_ID
+#   LISTMONK_ZOHO__CONTACT__CLIENT_SECRET
+#   LISTMONK_ZOHO__CONTACT__REFRESH_TOKEN
+#   LISTMONK_ZOHO__CONTACT__ACCOUNT_ID
+#   LISTMONK_ZOHO__HELLO__CLIENT_ID
+#   LISTMONK_ZOHO__HELLO__CLIENT_SECRET
+#   LISTMONK_ZOHO__HELLO__REFRESH_TOKEN
+#   LISTMONK_ZOHO__HELLO__ACCOUNT_ID
+#
+# The rule is: upper-case the key path and replace each "." with "__", prefixed
+# with LISTMONK_. Because the Docker entrypoint resolves any LISTMONK_*_FILE
+# variable to its non-_FILE counterpart, secrets can be mounted as files, e.g.
+# LISTMONK_ZOHO__CONTACT__REFRESH_TOKEN_FILE=/run/secrets/zoho_contact_refresh
+#
+# NEVER commit real credentials. The equivalent TOML keys are shown below only
+# to document the shape of the config.
+#
+# Zoho endpoints (India data centre, the defaults):
+#   OAuth token: https://accounts.zoho.in/oauth/v2/token
+#   Mail API:    https://mail.zoho.in/api/accounts/{accountId}/messages
+#   Auth header: Authorization: Zoho-oauthtoken <access_token>   (NOT "Bearer")
+#
+# The OAuth app needs the ZohoMail.messages.ALL scope. Access tokens are cached
+# in memory and refreshed automatically, and are never written to logs.
+#
+# Known Zoho API limitations, reported explicitly rather than hidden:
+#   * Attachments are not supported. A message with attachments fails with a
+#     clear error instead of being sent without them.
+#   * Arbitrary custom headers cannot be set. "Cc", "Bcc" and "Reply-To" are
+#     supported. List-Unsubscribe headers are dropped with a warning, because
+#     Zoho applies its own per-mailbox unsubscribe policy.
+#   * The API takes a single body plus a mailFormat of "html" or "text", so an
+#     HTML body and its plain-text alternative cannot both be sent. The HTML body
+#     is used when present.
+
+# [zoho]
+# enabled = true
+#
+#   [zoho.contact]
+#   from_address = "contact@vireliastudio.one"
+#   client_id = ""
+#   client_secret = ""
+#   refresh_token = ""
+#   account_id = ""
+#
+#   [zoho.hello]
+#   from_address = "hello@vireliastudio.one"
+#   client_id = ""
+#   client_secret = ""
+#   refresh_token = ""
+#   account_id = ""
+#
+# Optional per-mailbox overrides (defaults suit the Zoho India data centre):
+#   zoho_accounts_host = "accounts.zoho.in"   # accounts.zoho.com / .eu / .jp ...
+#   mail_host          = "mail.zoho.in"
+#   oauth_token_url    = "https://accounts.zoho.in/oauth/v2/token"
+#   api_version        = "v1"

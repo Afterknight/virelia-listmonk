@@ -209,8 +209,13 @@ func main() {
 		// Crud core.
 		core = initCore(fbOptinNotify, queries, db, i18n, ko)
 
-		// Initialize all messengers, SMTP and postback.
-		msgrs = append(initSMTPMessengers(), initPostbackMessengers(ko)...)
+		// Initialize all messengers: SMTP, Zoho Mail API and HTTP postback.
+		// The Zoho messenger is added alongside SMTP, never in place of it.
+		msgrsSMTP     = initSMTPMessengers()
+		msgrsZoho     = initZohoMessengers(ko)
+		msgrsPostback = initPostbackMessengers(ko)
+
+		msgrs = append(append(msgrsSMTP, msgrsZoho...), msgrsPostback...)
 
 		// Campaign manager.
 		mgr = initCampaignManager(msgrs, queries, urlCfg, core, media, i18n, ko)

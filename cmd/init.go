@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -46,6 +47,7 @@ import (
 	"github.com/knadh/listmonk/internal/media/providers/s3"
 	"github.com/knadh/listmonk/internal/messenger/email"
 	"github.com/knadh/listmonk/internal/messenger/postback"
+	"github.com/knadh/listmonk/internal/messenger/zoho"
 	"github.com/knadh/listmonk/internal/notifs"
 	"github.com/knadh/listmonk/internal/subimporter"
 	"github.com/knadh/listmonk/models"
@@ -712,6 +714,81 @@ func initSMTPMessengers() []manager.Messenger {
 	out = append([]manager.Messenger{msgr}, out...)
 
 	return out
+}
+
+// initZohoMessengers initializes the Zoho Mail API messenger, if enabled and
+// configured. It is added alongside the SMTP messenger, never in place of it.
+//
+// Configuration lives under the `zoho` key, with one child key per mailbox:
+//
+//	[zoho]
+//	  enabled = true
+//	  [zoho.contact]
+//	    from_address = "contact@vireliastudio.one"
+//	    client_id = "..."
+//	    client_secret = "..."
+//	    refresh_token = "..."
+//	    account_id = "..."
+//
+// Each field can be supplied via an env var by upper-casing the key path and
+// replacing dots with double underscores, e.g.
+// LISTMONK_ZOHO__CONTACT__REFRESH_TOKEN. Because the Docker entrypoint maps any
+// LISTMONK_*_FILE variable to its non-_FILE counterpart, secrets can be mounted
+// as files with LISTMONK_ZOHO__CONTACT__REFRESH_TOKEN_FILE /run/secrets/...
+func initZohoMessengers(ko *koanf.Koanf) []manager.Messenger {
+	if !ko.Exists("zoho") {
+		return nil
+	}
+
+	// Enabled either explicitly, or implicitly when at least one mailbox is
+	// fully configured.
+	if ko.Exists("zoho.enabled") {
+		if !ko.Bool("zoho.enabled") {
+			return nil
+		}
+	}
+
+	z := ko.Cut("zoho")
+
+	// Each immediate child key of [zoho] that carries credentials is one
+	// mailbox. Scalar keys such as `enabled` are skipped.
+	accounts := []zoho.Opt{}
+	for _, name := range z.MapKeys("") {
+		if !z.Exists(name+".client_id") && !z.Exists(name+".refresh_token") {
+			continue
+		}
+
+		var o zoho.Opt
+		if err := z.UnmarshalWithConf(name, &o, koanf.UnmarshalConf{Tag: "json"}); err != nil {
+			lo.Fatalf("error reading Zoho config for mailbox %q: %v", name, err)
+		}
+
+		if o.Name == "" {
+			o.Name = name
+		}
+		if o.FromAddress == "" {
+			o.FromAddress = name + "@vireliastudio.one"
+		}
+
+		accounts = append(accounts, o)
+	}
+
+	// Keep a stable order so startup logs and error messages are deterministic.
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Name < accounts[j].Name })
+
+	if len(accounts) == 0 {
+		lo.Println("zoho messenger is enabled but no mailbox credentials were found. Skipping.")
+		return nil
+	}
+
+	msgr, err := zoho.New(accounts, lo)
+	if err != nil {
+		lo.Fatalf("error initializing Zoho messenger: %v", err)
+	}
+
+	lo.Printf("initialized zoho (Zoho Mail API) messenger with %d mailbox(es)", len(accounts))
+
+	return []manager.Messenger{msgr}
 }
 
 // initPostbackMessengers initializes and returns all the enabled
