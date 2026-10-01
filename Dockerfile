@@ -29,6 +29,8 @@ WORKDIR /src
 # v1 frontend/yarn.lock. corepack provisions that exact version on demand; the
 # prompt is disabled so `docker build` never blocks waiting on stdin.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# Cypress is test-only; do not download its browser during the production build.
+ENV CYPRESS_INSTALL_BINARY=0
 RUN corepack enable
 # Install dependencies first, against just the manifests, so that this layer is
 # reused whenever only application source changes.
