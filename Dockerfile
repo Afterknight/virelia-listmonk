@@ -41,7 +41,7 @@ COPY frontend/email-builder/package.json frontend/email-builder/yarn.lock ./fron
 RUN mkdir -p static/public/static
 
 RUN cd frontend && yarn install --frozen-lockfile --network-concurrency 4 --network-timeout 120000 \
- && cd email-builder && yarn install --frozen-lockfile --network-concurrency 1 --network-timeout 120000
+ && cd email-builder && yarn install --frozen-lockfile --network-concurrency 4 --network-timeout 120000
 
 COPY frontend ./frontend
 
