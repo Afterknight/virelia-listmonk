@@ -1,5 +1,140 @@
-FROM listmonk/listmonk:latest
+# syntax=docker/dockerfile:1
 
+# =============================================================================
+# Virelia Listmonk
+#
+# This builds the Listmonk source IN THIS REPOSITORY -- including the custom
+# "zoho" campaign messenger (internal/messenger/zoho) -- rather than pulling the
+# official listmonk/listmonk image, which ships an upstream binary without it.
+#
+# Layout:
+#   frontend -> builds the Vue admin UI + email-builder bundle
+#   build    -> compiles ./cmd and packs every static asset into the binary
+#   runtime  -> Alpine + the self-contained binary
+#
+# Because the static assets are packed into the binary with stuffbin (the
+# project's own `make dist` flow), the runtime image needs nothing but the
+# binary itself.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Stage 1: frontend. Produces /src/frontend/dist, which stage 2 packs as /admin.
+# -----------------------------------------------------------------------------
+FROM node:22-alpine AS frontend
+
+WORKDIR /src
+
+# Yarn 1.x, matching the `packageManager` field in frontend/package.json and the
+# v1 frontend/yarn.lock. corepack provisions that exact version on demand; the
+# prompt is disabled so `docker build` never blocks waiting on stdin.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+
+# Install dependencies first, against just the manifests, so that this layer is
+# reused whenever only application source changes.
+COPY frontend/package.json frontend/yarn.lock ./frontend/
+COPY frontend/email-builder/package.json frontend/email-builder/yarn.lock ./frontend/email-builder/
+
+RUN cd frontend && yarn install --frozen-lockfile \
+ && cd email-builder && yarn install --frozen-lockfile
+
+COPY frontend ./frontend
+
+# Mirrors the `build-frontend` target in the Makefile: the email-builder bundle
+# must be copied into frontend/public/static/ BEFORE the main frontend build so
+# that vite bundles it.
+ARG VUE_APP_VERSION=v0.0.0-virelia
+ENV VUE_APP_VERSION=${VUE_APP_VERSION}
+
+RUN cd frontend/email-builder \
+ && yarn build \
+ && mkdir -p ../public/static/email-builder \
+ && cp -r dist/* ../public/static/email-builder/
+
+RUN cd frontend && yarn build
+
+
+# -----------------------------------------------------------------------------
+# Stage 2: build the custom Listmonk binary.
+# -----------------------------------------------------------------------------
+FROM golang:1.26-alpine AS build
+
+# make drives the project's own Go build target.
+RUN apk add --no-cache make
+
+WORKDIR /src
+
+# Static binary, so the runtime image needs no libc/glibc matching.
+ENV CGO_ENABLED=0
+
+# Pin the version so the build is reproducible. Without this the Makefile derives
+# it from git/VERSION, which are absent from the build context.
+ARG LISTMONK_VERSION=v0.0.0-virelia
+ENV LISTMONK_VERSION=${LISTMONK_VERSION}
+
+# Cache dependencies separately from source.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Full Go source plus the assets that get packed into the binary.
+COPY . .
+
+# The admin frontend comes from stage 1, not the build context.
+COPY --from=frontend /src/frontend/dist ./frontend/dist
+
+# stuffbin packs config.toml.sample, queries/, schema.sql, permissions.json,
+# static/, i18n/ and the admin frontend into the binary (the `pack-bin` target
+# in the Makefile).
+RUN go install github.com/knadh/stuffbin/... \
+ && make build \
+ && stuffbin -a stuff -in listmonk -out listmonk \
+      config.toml.sample \
+      schema.sql \
+      queries:/queries \
+      permissions.json \
+      static/public:/public \
+      static/email-templates \
+      frontend/dist:/admin \
+      i18n:/i18n
+
+# Guard against silently shipping an upstream prebuilt binary: these strings
+# exist only in this fork's Zoho messenger and nowhere in listmonk upstream.
+# If this ever fails, the image would be running stock listmonk.
+RUN grep -q "Zoho-oauthtoken" listmonk \
+ && grep -q "initialized zoho (Zoho Mail API) messenger" listmonk \
+ && echo "OK: binary contains this fork's Zoho messenger"
+
+# Prints the build string that was stamped in via ldflags, and exits before
+# touching Postgres.
+RUN /src/listmonk --version
+
+
+# -----------------------------------------------------------------------------
+# Stage 3: runtime.
+# -----------------------------------------------------------------------------
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates tzdata shadow su-exec
+
+WORKDIR /listmonk
+
+COPY --from=build /src/listmonk .
+
+# The entrypoint resolves PUID/PGID and expands any LISTMONK_*_FILE variable to
+# its non-_FILE counterpart, which is how the Zoho client secrets and refresh
+# tokens can be mounted as files.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Voroa requirement: serve on 0.0.0.0:3000.
 ENV LISTMONK_app__address=0.0.0.0:3000
 
+EXPOSE 3000
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# Unchanged from the previous image: install the schema idempotently, upgrade,
+# then run. `--config ''` means "read no config file", so all configuration comes
+# from LISTMONK_* environment variables and the settings stored in Postgres.
 CMD ["sh", "-c", "./listmonk --install --idempotent --yes --config '' && ./listmonk --upgrade --yes --config '' && exec ./listmonk --config ''"]
