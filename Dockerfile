@@ -29,7 +29,9 @@ WORKDIR /src
 # v1 frontend/yarn.lock. corepack provisions that exact version on demand; the
 # prompt is disabled so `docker build` never blocks waiting on stdin.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
+RUN corepack enable \
+ && yarn config set network-timeout 600000 \
+ && yarn config set registry https://registry.npmjs.org
 
 # Install dependencies first, against just the manifests, so that this layer is
 # reused whenever only application source changes.
