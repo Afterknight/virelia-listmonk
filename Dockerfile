@@ -40,8 +40,8 @@ COPY frontend/email-builder/package.json frontend/email-builder/yarn.lock ./fron
 # so that directory does not exist and `cp` fails. Create it up front.
 RUN mkdir -p static/public/static
 
-RUN cd frontend && yarn install --frozen-lockfile \
- && cd email-builder && yarn install --frozen-lockfile
+RUN cd frontend && yarn install --frozen-lockfile --network-concurrency 1 --network-timeout 120000 \
+ && cd email-builder && yarn install --frozen-lockfile --network-concurrency 1 --network-timeout 120000
 
 COPY frontend ./frontend
 
